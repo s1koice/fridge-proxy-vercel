@@ -18,35 +18,64 @@ export default async function handler(req, res) {
     });
     const xml = await r.text();
 
-    // соберём map(list_i -> value)
-    const map = {};
-    const re = /<u i="list_(\\d+)"><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/u>/g;
-    let m;
-    while ((m = re.exec(xml)) !== null) map[Number(m[1])] = m[2].trim();
+    // --- простой парсер XML без внешних библиотек ---
+    function parse(xmlText) {
+      const map = {};
+      let i = 0;
+      while (true) {
+        const start = xmlText.indexOf('<u i="list_', i);
+        if (start === -1) break;
+        const afterAttr = start + '<u i="list_'.length; // позиция после 'list_'
+        const endAttr = xmlText.indexOf('">', afterAttr);
+        if (endAttr === -1) break;
 
-    const alarms = [];
-    const keys = Object.keys(map).map(Number).sort((a,b)=>a-b);
-    for (const base of keys) {
-      if (base % 6 !== 0) continue;
-      const idRaw = map[base];
-      const name  = (map[base+1] || '').trim();
-      const tempS = (map[base+2] || '').replace(',', '.');
-      if (!idRaw || !name) continue;
+        const idxStr = xmlText.slice(afterAttr, endAttr);
+        const cdataStart = xmlText.indexOf('<![CDATA[', endAttr);
+        const cdataEnd = xmlText.indexOf(']]>', cdataStart);
+        const closeU = xmlText.indexOf('</u>', cdataEnd);
 
-      // только 1..19
-      const idNum = parseInt(String(idRaw), 10);
-      if (!(idNum >= 1 && idNum <= 19)) continue;
+        if (cdataStart === -1 || cdataEnd === -1 || closeU === -1) {
+          i = endAttr + 1; // пропускаем битую ноду
+          continue;
+        }
 
-      const temp = Number.parseFloat(tempS);
-      const freezer = /מקפ|freez/i.test(name);
-      const thr = freezer ? -1 : 9;
+        const val = xmlText.slice(cdataStart + 9, cdataEnd).trim();
+        const idxNum = parseInt(idxStr, 10);
+        if (Number.isFinite(idxNum)) map[idxNum] = val;
 
-      // NaN трактуем как проблему сенсора
-      const isAlarm = Number.isFinite(temp) ? temp > thr : true;
-      if (isAlarm) alarms.push({ id: String(idRaw), name, temp, freezer });
+        i = closeU + 4;
+      }
+
+      const keys = Object.keys(map).map(Number).sort((a, b) => a - b);
+      const rows = [];
+      for (const base of keys) {
+        if (base % 6 !== 0) continue; // каждая запись начинается на кратном 6
+        const idRaw   = map[base];
+        const name    = map[base + 1];
+        const tempRaw = map[base + 2];
+        if (!idRaw || !name) continue;
+
+        const idNum = parseInt(String(idRaw), 10);
+        if (!(idNum >= 1 && idNum <= 19)) continue; // только 1..19
+
+        const tNum = Number(String(tempRaw || '').replace(',', '.'));
+        rows.push({ id: String(idRaw).trim(), name, temp: Number.isFinite(tNum) ? tNum : null });
+      }
+      return rows;
     }
 
+    const rows = parse(xml);
+
+    // Только текущие превышения порога (без правила «30 минут»)
+    const alarms = rows.filter(r => {
+      const freezer = /מקפ|freez/i.test(r.name);
+      const thr = freezer ? -1 : 9;
+      if (r.temp == null) return true;   // проблема сенсора -> считаем аварией
+      return r.temp > thr;
+    });
+
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store');
     res.status(200).json({
       updated: new Date().toISOString(),
       count: alarms.length,
@@ -54,6 +83,6 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.status(502).json({ error: e.message });
+    res.status(500).json({ error: e.message });
   }
 }

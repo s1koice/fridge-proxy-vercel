@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     }
 
     // 3. Формируем список
-    const lines = data.alarms.map(a => `${a.name}: ${a.temp.toFixed(1)}°C`);
+    const lines = alarms.map(a => `#${a.id} ${a.name}: ${a.temp.toFixed(1)}°C`);
     const updated = new Date(data.updated).toLocaleString("he-IL");
 
     const result = `📋 מקררים עם בעיה:\n\n${lines.join("\n")}\n\nעודכן: ${updated}`;

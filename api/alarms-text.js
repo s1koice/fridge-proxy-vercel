@@ -1,25 +1,41 @@
 export default async function handler(req, res) {
   try {
-    // 1. Запрашиваем твой основной alarms API
-    const response = await fetch("https://fridge-proxy-vercel.vercel.app/api/alarms");
-    const data = await response.json();
+    // Берём актуальные тревоги из твоего JSON-эндпоинта
+    const r = await fetch("https://fridge-proxy-vercel.vercel.app/api/alarms", {
+      cache: "no-store",
+    });
+    if (!r.ok) throw new Error(`Upstream status ${r.status}`);
+    const data = await r.json();
 
-    // 2. Если нет тревог
-    if (!data.alarms || data.alarms.length === 0) {
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      return res.status(200).send("✅ כל המקררים תקינים");
-    }
+    // Время обновления (по ИЛ)
+    const updatedDate = data?.updated ? new Date(data.updated) : new Date();
+    const updatedStr = updatedDate.toLocaleString("he-IL", { hour12: false });
 
-    // 3. Формируем список
-    const lines = alarms.map(a => `#${a.id} ${a.name}: ${a.temp.toFixed(1)}°C`);
-    const updated = new Date(data.updated).toLocaleString("he-IL");
-
-    const result = `📋 מקררים עם בעיה:\n\n${lines.join("\n")}\n\nעודכן: ${updated}`;
+    const alarms = Array.isArray(data?.alarms) ? data.alarms : [];
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.status(200).send(result);
 
-  } catch (err) {
-    res.status(500).send("❌ שגיאה בשרת: " + err.message);
+    // Если тревог нет — короткий ответ
+    if (!alarms.length) {
+      return res.status(200).send(`✅ אין התראות\nעודכן: ${updatedStr}`);
+    }
+
+    // Обёртка для корректного отображения числа+единицы в RTL (FSI … PDI)
+    const rtl = (s) => `\u2068${s}\u2069`;
+
+    // Собираем строки: #ID ИМЯ: 12.3℃  (используем символ ℃, чтобы не "ломался" порядок)
+    const lines = alarms.map((a) => {
+      const id = a?.id ?? "?";
+      const name = a?.name ?? "—";
+      const t = Number.isFinite(a?.temp) ? a.temp : null;
+      const tempStr = t === null ? "חיישן?" : `${t.toFixed(1)}\u2103`; // \u2103 = ℃
+      return `#${id} ${name}: ${rtl(tempStr)}`;
+    });
+
+    const body = `📋 התראות מקררים\n\n${lines.join("\n")}\n\nעודכן: ${updatedStr}`;
+    res.status(200).send(body);
+  } catch (e) {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.status(500).send("❌ שגיאה: " + e.message);
   }
 }

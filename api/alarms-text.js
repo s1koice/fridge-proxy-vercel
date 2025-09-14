@@ -32,7 +32,7 @@ export default async function handler(req, res) {
 
         // для холодильника 13-14 уменьшаем на 5 градусов
         if (a.id === "13-14" && temp !== null) {
-          temp = temp - 5;
+          temp = temp - 6;
         }
 
         const id = a?.id ?? "?";
